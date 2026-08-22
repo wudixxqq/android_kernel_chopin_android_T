@@ -57,8 +57,8 @@ ANYKERNEL_BRANCH=ares
 
 # 工具链（支持 git 或 tar.gz）
 CLANG_URL=https://github.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-6443078 -b 10.0
-GCC64_URL=https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/refs/tags/android-13.0.0_r1.tar.gz
-GCC32_URL=https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9/+archive/refs/tags/android-13.0.0_r1.tar.gz
+GCC64_URL=https://github.com/KudProject/aarch64-linux-android-4.9.git -b master
+GCC32_URL=https://github.com/dandelion64-Archives/arm-linux-androideabi-4.9.git -b main
 ```
 
 ### 2. 本地编译
