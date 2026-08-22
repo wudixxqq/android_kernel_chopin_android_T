@@ -136,7 +136,7 @@ install_toolchain() {
             URL=$(echo "$CLANG_URL" | awk '{print $1}')
             BR=$(echo "$CLANG_URL" | awk '{print $3}')
             [ -z "$BR" ] && BR="main"
-            git clone --depth=1 "$URL" -b "$BR" clang
+            git clone --depth=1 -b "$BR" "$URL" clang
         fi
         [ -d clang/bin ] || { echo "[-] Clang 下载或解压失败"; exit 1; }
     fi
@@ -154,7 +154,7 @@ install_toolchain() {
             URL=$(echo "$GCC64_URL" | awk '{print $1}')
             BR=$(echo "$GCC64_URL" | awk '{print $3}')
             [ -z "$BR" ] && BR="main"
-            git clone --depth=1 "$URL" -b "$BR" gcc64
+            git clone --depth=1 -b "$BR" "$URL" gcc64
         fi
         [ -d gcc64/bin ] || { echo "[-] GCC64 下载或解压失败"; exit 1; }
     fi
@@ -172,7 +172,7 @@ install_toolchain() {
             URL=$(echo "$GCC32_URL" | awk '{print $1}')
             BR=$(echo "$GCC32_URL" | awk '{print $3}')
             [ -z "$BR" ] && BR="main"
-            git clone --depth=1 "$URL" -b "$BR" gcc32
+            git clone --depth=1 -b "$BR" "$URL" gcc32
         fi
         [ -d gcc32/bin ] || { echo "[-] GCC32 下载或解压失败"; exit 1; }
     fi
