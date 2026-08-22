@@ -145,10 +145,17 @@ install_toolchain() {
     if [ ! -d "$TOOL_DIR/gcc64/bin" ]; then
         echo "[+] 准备 GCC64 工具链..."
         rm -rf "$TOOL_DIR/gcc64"
-        mkdir gcc64
-        wget -q -O gcc-aarch64.tar.gz "$GCC64_URL"
-        tar -C gcc64/ -zxvf gcc-aarch64.tar.gz >/dev/null
-        rm -f gcc-aarch64.tar.gz
+        if echo "$GCC64_URL" | grep -qE '\.tar\.gz|\.tgz'; then
+            mkdir gcc64
+            wget -q -O gcc-aarch64.tar.gz "$GCC64_URL"
+            tar -C gcc64/ -zxvf gcc-aarch64.tar.gz >/dev/null
+            rm -f gcc-aarch64.tar.gz
+        else
+            URL=$(echo "$GCC64_URL" | awk '{print $1}')
+            BR=$(echo "$GCC64_URL" | awk '{print $3}')
+            [ -z "$BR" ] && BR="main"
+            git clone --depth=1 "$URL" -b "$BR" gcc64
+        fi
         [ -d gcc64/bin ] || { echo "[-] GCC64 下载或解压失败"; exit 1; }
     fi
 
@@ -156,10 +163,17 @@ install_toolchain() {
     if [ ! -d "$TOOL_DIR/gcc32/bin" ]; then
         echo "[+] 准备 GCC32 工具链..."
         rm -rf "$TOOL_DIR/gcc32"
-        mkdir gcc32
-        wget -q -O gcc-arm.tar.gz "$GCC32_URL"
-        tar -C gcc32/ -zxvf gcc-arm.tar.gz >/dev/null
-        rm -f gcc-arm.tar.gz
+        if echo "$GCC32_URL" | grep -qE '\.tar\.gz|\.tgz'; then
+            mkdir gcc32
+            wget -q -O gcc-arm.tar.gz "$GCC32_URL"
+            tar -C gcc32/ -zxvf gcc-arm.tar.gz >/dev/null
+            rm -f gcc-arm.tar.gz
+        else
+            URL=$(echo "$GCC32_URL" | awk '{print $1}')
+            BR=$(echo "$GCC32_URL" | awk '{print $3}')
+            [ -z "$BR" ] && BR="main"
+            git clone --depth=1 "$URL" -b "$BR" gcc32
+        fi
         [ -d gcc32/bin ] || { echo "[-] GCC32 下载或解压失败"; exit 1; }
     fi
 }
