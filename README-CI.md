@@ -93,9 +93,23 @@ GCC32_URL=https://github.com/dandelion64-Archives/arm-linux-androideabi-4.9.git 
    - **DroidSpace**：是否启用
    - **Telegram**：是否上传
    - **Branch**：要编译的分支（默认 `T`）
+   - **KernelSource**：内核源码仓库，`self` 表示当前仓库，也可填外部 git URL
+   - **KernelConfig**：defconfig 名称，留空使用 `config.env` 中的值
 4. 编译完成后在 Actions 页面下载 artifact。
 
-### 4. Telegram 通知配置
+### 4. 使用外部源码（如 froyoandroid 已集成 SUSFS 的分支）
+
+如果当前仓库没有集成 SUSFS，可以直接使用 froyoandroid 已经集成好的 `susfs` 分支：
+
+- **Branch**：`susfs`
+- **KernelSource**：`https://github.com/froyoandroid/android_kernel_chopin_android_T.git`
+- **KernelConfig**：`chopin_defconfig`
+- **SU**：`ReSukiSU`（该分支已集成 Re:SukiSU + SUSFS）
+- **SUSFS**：`true`
+
+此时 CI 会自动跳过 KernelSU / SUSFS 补丁步骤，直接编译外部源码。
+
+### 5. Telegram 通知配置
 
 如需启用 Telegram 上传，在仓库 **Settings → Secrets and variables → Actions** 中添加以下 Secrets：
 
