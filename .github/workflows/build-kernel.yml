@@ -121,18 +121,16 @@ jobs:
         run: |
           cd $GITHUB_WORKSPACE/kernel_workspace
           CLANG_URL="${{ env.CLANG_URL }}"
-          if echo "$CLANG_URL" | grep -qE '\.git( |$)'; then
-            # 处理 "URL -b branch" 格式
+          if echo "$CLANG_URL" | grep -qE '\.tar\.gz|\.tgz'; then
+            # tar.gz 压缩包
+            mkdir clang && wget -q -O clang.tar.gz "$CLANG_URL"
+            tar -C clang/ -zxvf clang.tar.gz >/dev/null
+          else
+            # git 仓库，支持 "URL -b branch" 格式
             URL=$(echo "$CLANG_URL" | awk '{print $1}')
             BR=$(echo "$CLANG_URL" | awk '{print $3}')
             [ -z "$BR" ] && BR="main"
             git clone -q --depth=1 "$URL" -b "$BR" clang
-          elif echo "$CLANG_URL" | grep -q '\.tar\.gz\|\.tgz'; then
-            mkdir clang && wget -q -O clang.tar.gz "$CLANG_URL"
-            tar -C clang/ -zxvf clang.tar.gz >/dev/null
-          else
-            echo "错误：不支持的 CLANG_URL 格式: $CLANG_URL"
-            exit 1
           fi
           test -d clang/bin || { echo "错误：Clang bin 目录不存在"; exit 1; }
 
