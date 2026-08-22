@@ -127,16 +127,16 @@ install_toolchain() {
     if [ ! -d "$TOOL_DIR/clang/bin" ]; then
         echo "[+] 准备 Clang 工具链..."
         rm -rf "$TOOL_DIR/clang"
-        if echo "$CLANG_URL" | grep -qE '\.git( |$)'; then
-            URL=$(echo "$CLANG_URL" | awk '{print $1}')
-            BR=$(echo "$CLANG_URL" | awk '{print $3}')
-            [ -z "$BR" ] && BR="main"
-            git clone --depth=1 "$URL" -b "$BR" clang
-        else
+        if echo "$CLANG_URL" | grep -qE '\.tar\.gz|\.tgz'; then
             mkdir clang
             wget -q -O clang.tar.gz "$CLANG_URL"
             tar -C clang/ -zxvf clang.tar.gz >/dev/null
             rm -f clang.tar.gz
+        else
+            URL=$(echo "$CLANG_URL" | awk '{print $1}')
+            BR=$(echo "$CLANG_URL" | awk '{print $3}')
+            [ -z "$BR" ] && BR="main"
+            git clone --depth=1 "$URL" -b "$BR" clang
         fi
         [ -d clang/bin ] || { echo "[-] Clang 下载或解压失败"; exit 1; }
     fi
