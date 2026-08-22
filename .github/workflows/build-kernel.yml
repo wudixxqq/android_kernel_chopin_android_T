@@ -65,7 +65,7 @@ jobs:
       - name: 检出仓库
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.Branch }}
+          ref: T
           fetch-depth: 1
 
       - name: 加载 config.env
@@ -101,6 +101,13 @@ jobs:
           echo "使用外部内核源码: ${{ env.KERNEL_SOURCE }} 分支: ${{ env.KERNEL_SOURCE_BRANCH }}"
           rm -rf .git
           git clone --depth=1 -b "${{ env.KERNEL_SOURCE_BRANCH }}" "${{ env.KERNEL_SOURCE }}" .
+
+      - name: 切换当前仓库分支（可选）
+        if: env.KERNEL_SOURCE == 'self' && github.event.inputs.Branch != 'T'
+        run: |
+          echo "切换到当前仓库分支: ${{ github.event.inputs.Branch }}"
+          git fetch --depth=1 origin "${{ github.event.inputs.Branch }}"
+          git checkout "${{ github.event.inputs.Branch }}"
 
       - name: 源码与配置自动检测
         run: |
