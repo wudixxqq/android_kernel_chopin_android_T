@@ -37,6 +37,16 @@ on:
         description: "要编译的分支"
         required: true
         default: "T"
+      KernelSource:
+        type: string
+        description: "内核源码仓库（self=当前仓库，或外部 git URL）"
+        required: true
+        default: "self"
+      KernelConfig:
+        type: string
+        description: "defconfig 名称（留空则使用 config.env 中的 KERNEL_CONFIG）"
+        required: false
+        default: ""
 
 jobs:
   build:
@@ -71,6 +81,26 @@ jobs:
           echo "CLANG_URL=${CLANG_URL}" >> $GITHUB_ENV
           echo "GCC64_URL=${GCC64_URL}" >> $GITHUB_ENV
           echo "GCC32_URL=${GCC32_URL}" >> $GITHUB_ENV
+          echo "KERNEL_SOURCE=${KERNEL_SOURCE:-self}" >> $GITHUB_ENV
+          echo "KERNEL_SOURCE_BRANCH=${KERNEL_SOURCE_BRANCH:-${{ github.event.inputs.Branch }}}" >> $GITHUB_ENV
+
+      - name: 应用 workflow 输入覆盖
+        run: |
+          KS_INPUT="${{ github.event.inputs.KernelSource }}"
+          KC_INPUT="${{ github.event.inputs.KernelConfig }}"
+          if [ -n "$KS_INPUT" ] && [ "$KS_INPUT" != "self" ]; then
+            echo "KERNEL_SOURCE=$KS_INPUT" >> $GITHUB_ENV
+          fi
+          if [ -n "$KC_INPUT" ]; then
+            echo "KERNEL_CONFIG=$KC_INPUT" >> $GITHUB_ENV
+          fi
+
+      - name: 切换外部内核源码（可选）
+        if: env.KERNEL_SOURCE != 'self'
+        run: |
+          echo "使用外部内核源码: ${{ env.KERNEL_SOURCE }} 分支: ${{ env.KERNEL_SOURCE_BRANCH }}"
+          rm -rf .git
+          git clone --depth=1 -b "${{ env.KERNEL_SOURCE_BRANCH }}" "${{ env.KERNEL_SOURCE }}" .
 
       - name: 源码与配置自动检测
         run: |
@@ -165,6 +195,7 @@ jobs:
           [ -d gcc32/bin ] || { echo "错误：GCC32 bin 目录不存在"; exit 1; }
 
       - name: 应用 KernelSU / SUSFS 补丁
+        if: env.KERNEL_SOURCE == 'self'
         run: |
           cd $GITHUB_WORKSPACE
           SRC="$GITHUB_WORKSPACE"
@@ -208,7 +239,7 @@ jobs:
           fi
 
       - name: 设置 KernelSU
-        if: env.SU_OPTION != 'None'
+        if: env.SU_OPTION != 'None' && env.KERNEL_SOURCE == 'self'
         run: |
           cd $GITHUB_WORKSPACE
           rm -rf KernelSU
