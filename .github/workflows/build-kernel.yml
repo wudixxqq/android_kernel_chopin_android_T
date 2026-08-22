@@ -136,12 +136,9 @@ jobs:
 
       - name: 下载 GCC 工具链
         run: |
+          set -x
           cd $GITHUB_WORKSPACE/kernel_workspace
-          parse_url_branch() {
-            URL=$(echo "$1" | awk '{print $1}')
-            BR=$(echo "$1" | awk '{print $3}')
-            [ -z "$BR" ] && BR="main"
-          }
+          echo "git version: $(git --version)"
 
           # GCC64
           GCC64_URL="${{ env.GCC64_URL }}"
@@ -149,10 +146,13 @@ jobs:
             mkdir gcc64 && wget -q -O gcc-aarch64.tar.gz "$GCC64_URL"
             tar -C gcc64/ -zxvf gcc-aarch64.tar.gz >/dev/null
           else
-            parse_url_branch "$GCC64_URL"
+            URL=$(echo "$GCC64_URL" | awk '{print $1}')
+            BR=$(echo "$GCC64_URL" | awk '{print $3}')
+            [ -z "$BR" ] && BR="main"
+            echo "GCC64 URL=$URL BR=$BR"
             git clone --depth=1 -b "$BR" "$URL" gcc64
           fi
-          [ -d gcc64/bin ] || { echo "错误：GCC64 bin 目录不存在"; exit 1; }
+          [ -d gcc64/bin ] || { echo "错误：GCC64 bin 目录不存在"; ls -la gcc64 2>/dev/null || true; exit 1; }
 
           # GCC32
           GCC32_URL="${{ env.GCC32_URL }}"
@@ -160,10 +160,13 @@ jobs:
             mkdir gcc32 && wget -q -O gcc-arm.tar.gz "$GCC32_URL"
             tar -C gcc32/ -zxvf gcc-arm.tar.gz >/dev/null
           else
-            parse_url_branch "$GCC32_URL"
+            URL=$(echo "$GCC32_URL" | awk '{print $1}')
+            BR=$(echo "$GCC32_URL" | awk '{print $3}')
+            [ -z "$BR" ] && BR="main"
+            echo "GCC32 URL=$URL BR=$BR"
             git clone --depth=1 -b "$BR" "$URL" gcc32
           fi
-          [ -d gcc32/bin ] || { echo "错误：GCC32 bin 目录不存在"; exit 1; }
+          [ -d gcc32/bin ] || { echo "错误：GCC32 bin 目录不存在"; ls -la gcc32 2>/dev/null || true; exit 1; }
 
       - name: 应用 KernelSU / SUSFS 补丁
         run: |
