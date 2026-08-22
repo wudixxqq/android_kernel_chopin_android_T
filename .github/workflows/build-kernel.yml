@@ -130,7 +130,7 @@ jobs:
             URL=$(echo "$CLANG_URL" | awk '{print $1}')
             BR=$(echo "$CLANG_URL" | awk '{print $3}')
             [ -z "$BR" ] && BR="main"
-            git clone -q --depth=1 "$URL" -b "$BR" clang
+            git clone --depth=1 -b "$BR" "$URL" clang
           fi
           test -d clang/bin || { echo "错误：Clang bin 目录不存在"; exit 1; }
 
@@ -150,7 +150,7 @@ jobs:
             tar -C gcc64/ -zxvf gcc-aarch64.tar.gz >/dev/null
           else
             parse_url_branch "$GCC64_URL"
-            git clone -q --depth=1 "$URL" -b "$BR" gcc64
+            git clone --depth=1 -b "$BR" "$URL" gcc64
           fi
           [ -d gcc64/bin ] || { echo "错误：GCC64 bin 目录不存在"; exit 1; }
 
@@ -161,7 +161,7 @@ jobs:
             tar -C gcc32/ -zxvf gcc-arm.tar.gz >/dev/null
           else
             parse_url_branch "$GCC32_URL"
-            git clone -q --depth=1 "$URL" -b "$BR" gcc32
+            git clone --depth=1 -b "$BR" "$URL" gcc32
           fi
           [ -d gcc32/bin ] || { echo "错误：GCC32 bin 目录不存在"; exit 1; }
 
