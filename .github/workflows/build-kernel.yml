@@ -1,0 +1,399 @@
+name: Build Kernel for chopin (MT6893)
+
+on:
+  workflow_dispatch:
+    inputs:
+      SU:
+        type: choice
+        description: "选择 Root 管理器（不启用内核 Root 请选 None）"
+        required: true
+        default: "None"
+        options:
+          - "None"
+          - "RKSU"
+          - "ReSukiSU"
+      SUSFS:
+        type: boolean
+        description: "启用 SUSFS（需配合 KernelSU 使用）"
+        required: false
+        default: false
+      BBR:
+        type: boolean
+        description: "启用 BBR 拥塞控制"
+        required: false
+        default: true
+      DroidSpace:
+        type: boolean
+        description: "启用 DroidSpace（USER_NS）"
+        required: false
+        default: false
+      TG:
+        type: boolean
+        description: "编译完成后上传到 Telegram"
+        required: false
+        default: false
+      Branch:
+        type: string
+        description: "要编译的分支"
+        required: true
+        default: "T"
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      actions: read
+    env:
+      SU_OPTION: ${{ github.event.inputs.SU }}
+      USE_SUSFS: ${{ github.event.inputs.SUSFS }}
+      USE_BBR: ${{ github.event.inputs.BBR }}
+      USE_DROIDSPACE: ${{ github.event.inputs.DroidSpace }}
+      USE_TG: ${{ github.event.inputs.TG }}
+
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.Branch }}
+          fetch-depth: 1
+
+      - name: 加载 config.env
+        id: load_config
+        run: |
+          set -a
+          source config.env
+          set +a
+          echo "KERNEL_CONFIG=${KERNEL_CONFIG}" >> $GITHUB_ENV
+          echo "KERNEL_JX=${KERNEL_JX}" >> $GITHUB_ENV
+          echo "ANYKERNEL_REPO=${ANYKERNEL_REPO}" >> $GITHUB_ENV
+          echo "ANYKERNEL_BRANCH=${ANYKERNEL_BRANCH}" >> $GITHUB_ENV
+          echo "CLANG_URL=${CLANG_URL}" >> $GITHUB_ENV
+          echo "GCC64_URL=${GCC64_URL}" >> $GITHUB_ENV
+          echo "GCC32_URL=${GCC32_URL}" >> $GITHUB_ENV
+
+      - name: 源码与配置自动检测
+        run: |
+          echo "## 源码结构检测" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ ! -f "Makefile" ]; then
+            echo "错误：未找到 Makefile，仓库可能不是标准 Linux 内核源码"
+            echo "- Makefile: 不存在" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+          echo "- Makefile: 存在" >> $GITHUB_STEP_SUMMARY
+
+          if [ ! -d "arch/arm64/configs" ]; then
+            echo "错误：未找到 arch/arm64/configs 目录"
+            echo "- arch/arm64/configs: 不存在" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+          echo "- arch/arm64/configs: 存在" >> $GITHUB_STEP_SUMMARY
+
+          DEFCONFIG="${{ env.KERNEL_CONFIG }}"
+          if [ ! -f "arch/arm64/configs/${DEFCONFIG}" ]; then
+            echo "错误：未找到 defconfig: ${DEFCONFIG}"
+            echo "- defconfig (${DEFCONFIG}): 不存在" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+          echo "- defconfig (${DEFCONFIG}): 存在" >> $GITHUB_STEP_SUMMARY
+
+          KERNEL_VERSION=$(head -n 5 Makefile | grep -E '^(VERSION|PATCHLEVEL|SUBLEVEL)' | tr -d ' ' | paste -sd '-' -)
+          echo "检测到的内核版本: ${KERNEL_VERSION}"
+          echo "- 内核版本: ${KERNEL_VERSION}" >> $GITHUB_STEP_SUMMARY
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "检测通过，开始准备编译环境。" >> $GITHUB_STEP_SUMMARY
+
+      - name: 安装编译依赖
+        run: |
+          sudo apt-get update
+          sudo -E apt-get -y -qq install \
+            git make bc bison ccache openssl dos2unix zip kmod cpio flex \
+            libelf-dev curl libssl-dev libtfm-dev wget device-tree-compiler \
+            ca-certificates python3 python2 binutils binutils-aarch64-linux-gnu \
+            binutils-arm-linux-gnueabi jq
+
+      - name: 创建工作目录
+        run: mkdir -p $GITHUB_WORKSPACE/kernel_workspace
+
+      - name: 下载 Clang 工具链
+        run: |
+          cd $GITHUB_WORKSPACE/kernel_workspace
+          CLANG_URL="${{ env.CLANG_URL }}"
+          if echo "$CLANG_URL" | grep -qE '\.git( |$)'; then
+            # 处理 "URL -b branch" 格式
+            URL=$(echo "$CLANG_URL" | awk '{print $1}')
+            BR=$(echo "$CLANG_URL" | awk '{print $3}')
+            [ -z "$BR" ] && BR="main"
+            git clone -q --depth=1 "$URL" -b "$BR" clang
+          elif echo "$CLANG_URL" | grep -q '\.tar\.gz\|\.tgz'; then
+            mkdir clang && wget -q -O clang.tar.gz "$CLANG_URL"
+            tar -C clang/ -zxvf clang.tar.gz >/dev/null
+          else
+            echo "错误：不支持的 CLANG_URL 格式: $CLANG_URL"
+            exit 1
+          fi
+          test -d clang/bin || { echo "错误：Clang bin 目录不存在"; exit 1; }
+
+      - name: 下载 GCC 工具链
+        run: |
+          cd $GITHUB_WORKSPACE/kernel_workspace
+          mkdir gcc64 && wget -q -O gcc-aarch64.tar.gz "${{ env.GCC64_URL }}"
+          tar -C gcc64/ -zxvf gcc-aarch64.tar.gz >/dev/null
+          mkdir gcc32 && wget -q -O gcc-arm.tar.gz "${{ env.GCC32_URL }}"
+          tar -C gcc32/ -zxvf gcc-arm.tar.gz >/dev/null
+
+      - name: 应用 KernelSU / SUSFS 补丁
+        run: |
+          cd $GITHUB_WORKSPACE
+          SRC="$GITHUB_WORKSPACE"
+          if [ "$SU_OPTION" = "RKSU" ]; then
+            echo "KSU_LOG: 选择了 RKSU"
+            echo "KSU_LOG: 下载并应用 RKSU 4.14 manual hook patch"
+            wget -q https://github.com/rksuorg/kernel_patches/raw/master/manual_hook/kernel-4.14.patch -O ksu-4.14.patch \
+              || { echo "错误：下载 RKSU patch 失败"; exit 1; }
+            patch -p1 -d "$SRC" < ksu-4.14.patch \
+              || { echo "错误：应用 RKSU patch 失败"; cat ksu-4.14.patch | head -n 50; exit 1; }
+          elif [ "$SU_OPTION" = "ReSukiSU" ]; then
+            echo "KSU_LOG: 选择了 ReSukiSU"
+            if [ "$USE_SUSFS" = "true" ]; then
+              echo "KSU_LOG: SUSFS 使用 ReSukiSU inline hooks，跳过 4.14 manual hook patch"
+            else
+              echo "KSU_LOG: 下载并应用 ReSukiSU 4.14 manual hook patch"
+              wget -q -O resukisu-4.14.patch \
+                https://raw.githubusercontent.com/ReSukiSU/ReSukiSU_Patches/main/scope-minimized/kernel-4.14.patch \
+                || { echo "错误：下载 ReSukiSU patch 失败"; exit 1; }
+              patch -p1 -d "$SRC" < resukisu-4.14.patch \
+                || { echo "错误：应用 ReSukiSU patch 失败"; cat resukisu-4.14.patch | head -n 50; exit 1; }
+            fi
+          else
+            echo "KSU_LOG: 不启用内核 Root"
+          fi
+
+          if [ "$USE_SUSFS" = "true" ]; then
+            if [ "$SU_OPTION" = "None" ]; then
+              echo "错误：启用 SUSFS 必须同时选择 RKSU 或 ReSukiSU"
+              exit 1
+            fi
+            echo "KSU_LOG: 开启 SUSFS"
+            wget -q -O susfs-4.14.patch \
+              https://raw.githubusercontent.com/sanba0519/Kernel-patch/refs/heads/main/USeless/susfs_patch_to_4.14-bak.patch \
+              || { echo "错误：下载 SUSFS patch 失败"; exit 1; }
+            patch -p1 -d "$SRC" < susfs-4.14.patch \
+              || { echo "错误：应用 SUSFS patch 失败"; exit 1; }
+            sed -i 's/^orig_flow:$/orig_flow:;/' "$SRC/fs/notify/fdinfo.c"
+            grep -q '^orig_flow:;' "$SRC/fs/notify/fdinfo.c" \
+              || { echo "错误：SUSFS fdinfo 4.14 兼容修正失败"; exit 1; }
+          fi
+
+      - name: 设置 KernelSU
+        if: env.SU_OPTION != 'None'
+        run: |
+          cd $GITHUB_WORKSPACE
+          rm -rf KernelSU
+          if [ "$SU_OPTION" = "ReSukiSU" ]; then
+            echo "KSU_LOG: 设置 ReSukiSU"
+            curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -s main
+            if [ "$USE_SUSFS" = "true" ]; then
+              echo "KSU_LOG: 应用 ReSukiSU SUSFS inline hooks"
+              wget -q -O susfs_inline_hook_patches.sh \
+                https://raw.githubusercontent.com/JackA1ltman/NonGKI_Kernel_Build_2nd/mainline/Patches/susfs_inline_hook_patches.sh \
+                || { echo "错误：下载 SUSFS inline hook 脚本失败"; exit 1; }
+              bash susfs_inline_hook_patches.sh
+            fi
+          else
+            echo "KSU_LOG: 设置 RKSU (rsuntk)"
+            curl -LSs "https://raw.githubusercontent.com/rsuntk/KernelSU/main/kernel/setup.sh" | bash -s main
+          fi
+
+      - name: 配置 ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: build-kernel-chopin-${{ env.KERNEL_CONFIG }}
+          max-size: 3G
+
+      - name: 配置并编译内核
+        id: compile
+        run: |
+          cd $GITHUB_WORKSPACE
+          export PATH=$GITHUB_WORKSPACE/clang/bin:$GITHUB_WORKSPACE/gcc64/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export KBUILD_BUILD_HOST=GitHub-Actions
+          export KBUILD_BUILD_USER=wudixxqq
+
+          echo "生成初始配置: ${{ env.KERNEL_CONFIG }}"
+          make -j$(nproc --all) O=out ARCH=arm64 ${{ env.KERNEL_CONFIG }}
+
+          if [ "$USE_DROIDSPACE" = "true" ]; then
+            echo "启用 DroidSpace..."
+            ./scripts/config --file out/.config \
+              --enable CONFIG_NAMESPACES \
+              --enable CONFIG_USER_NS \
+              --enable CONFIG_DEVTMPFS \
+              --enable CONFIG_DEVTMPFS_MOUNT
+            make O=out olddefconfig
+          fi
+
+          if [ "$USE_BBR" = "true" ]; then
+            echo "启用 BBR..."
+            ./scripts/config --file out/.config \
+              --enable CONFIG_TCP_CONG_BBR \
+              --enable CONFIG_NET_SCH_FQ
+            make O=out olddefconfig
+          fi
+
+          # 基础安全修正
+          ./scripts/config --file out/.config \
+            --enable CONFIG_NAMESPACES \
+            --enable CONFIG_DEVTMPFS \
+            --disable CONFIG_USER_NS \
+            --enable CONFIG_DEVTMPFS_MOUNT
+
+          # KernelSU 配置
+          if [ "$SU_OPTION" = "ReSukiSU" ]; then
+            if [ "$USE_SUSFS" = "true" ]; then
+              echo "KSU_LOG: 启用 CONFIG_KSU + CONFIG_KSU_SUSFS inline hook"
+              ./scripts/config --file out/.config \
+                --enable CONFIG_KSU \
+                --enable CONFIG_KSU_SUSFS \
+                --disable CONFIG_KSU_MANUAL_HOOK \
+                --disable CONFIG_KSU_TRACEPOINT_HOOK
+            else
+              echo "KSU_LOG: 启用 CONFIG_KSU + CONFIG_KSU_MANUAL_HOOK"
+              ./scripts/config --file out/.config \
+                --enable CONFIG_KSU \
+                --enable CONFIG_KSU_MANUAL_HOOK \
+                --disable CONFIG_KSU_SUSFS \
+                --disable CONFIG_KSU_TRACEPOINT_HOOK
+            fi
+          elif [ "$SU_OPTION" = "RKSU" ]; then
+            ./scripts/config --file out/.config --enable CONFIG_KSU
+          fi
+
+          make O=out ARCH=arm64 olddefconfig
+
+          echo "开始编译..."
+          make -j"$(nproc)" \
+            O=out \
+            ARCH=arm64 \
+            CC="ccache clang" \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-android- \
+            CROSS_COMPILE_ARM32=arm-linux-androideabi- \
+            LD=ld.lld 2>&1 | tee error.log
+
+          echo "compile_status=success" >> $GITHUB_OUTPUT
+
+      - name: 检查编译产物
+        id: check_output
+        run: |
+          if [ ! -f "out/arch/arm64/boot/Image.gz-dtb" ]; then
+            echo "错误：编译失败，未生成 out/arch/arm64/boot/Image.gz-dtb"
+            echo "compile_status=failure" >> $GITHUB_OUTPUT
+            echo "## 编译失败" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "未找到 Image.gz-dtb，请查看日志。" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+          echo "编译产物检查通过"
+          echo "## 编译成功" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          ls -lh out/arch/arm64/boot/Image.gz-dtb >> $GITHUB_STEP_SUMMARY
+
+      - name: 打包 AnyKernel3
+        id: package
+        run: |
+          cd $GITHUB_WORKSPACE/kernel_workspace
+          git clone -q --depth=1 -b ${{ env.ANYKERNEL_BRANCH }} ${{ env.ANYKERNEL_REPO }} AnyKernel3
+          cp $GITHUB_WORKSPACE/out/arch/arm64/boot/Image.gz-dtb AnyKernel3/
+          cd AnyKernel3
+          zip -r9 ../kernel.zip . >/dev/null
+          cd ..
+          ls -lh kernel.zip
+
+      - name: 生成产物名称与说明
+        id: meta
+        run: |
+          if [ "$SU_OPTION" = "ReSukiSU" ]; then
+            NAME="chopin-ReSukiSU"
+          elif [ "$SU_OPTION" = "RKSU" ]; then
+            NAME="chopin-RKSU"
+          else
+            NAME="chopin-NoSU"
+          fi
+          [ "$USE_BBR" = "true" ] && NAME="${NAME}-BBR"
+          [ "$USE_DROIDSPACE" = "true" ] && NAME="${NAME}-DroidSpace"
+          [ "$USE_SUSFS" = "true" ] && NAME="${NAME}-SUSFS"
+          NAME="${NAME}-${{ github.run_number }}"
+          echo "artifact_name=${NAME}" >> $GITHUB_OUTPUT
+
+          COMMIT_SHA=$(git rev-parse --short HEAD)
+          COMMIT_MSG=$(git log -1 --pretty=format:'%s')
+          {
+            echo "caption<<EOF"
+            echo "<pre>"
+            echo "🔧 Commit: ${COMMIT_SHA} - ${COMMIT_MSG}"
+            echo ""
+            echo "Device: POCO X3 GT / Redmi Note 10 Pro 5G (chopin)"
+            echo "Kernel: 4.14.186"
+            echo "Android: 13"
+            echo ""
+            echo "📦 Features:"
+            echo "$SU_OPTION" | sed -E 's/None/❌ KernelSU/; s/RKSU/✅ RKSU/; s/ReSukiSU/✅ ReSukiSU/'
+            [ "$USE_BBR" = "true" ] && echo "✅ BBR" || echo "❌ BBR"
+            [ "$USE_DROIDSPACE" = "true" ] && echo "✅ DroidSpace" || echo "❌ DroidSpace"
+            [ "$USE_SUSFS" = "true" ] && echo "✅ SUSFS" || echo "❌ SUSFS"
+            echo "</pre>"
+            echo ""
+            echo "Build by GitHub Actions"
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
+
+      - name: 上传编译产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.meta.outputs.artifact_name }}
+          path: kernel_workspace/kernel.zip
+          if-no-files-found: error
+
+      - name: 上传错误日志（仅失败时）
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: error-log-${{ github.run_number }}
+          path: error.log
+          if-no-files-found: ignore
+
+      - name: 上传 Telegram
+        if: env.USE_TG == 'true' && success()
+        env:
+          API_ID: ${{ secrets.API_ID }}
+          API_HASH: ${{ secrets.API_HASH }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          BOT_CI_SESSION: ${{ secrets.BOT_CI_SESSION }}
+          CAPTION: ${{ steps.meta.outputs.caption }}
+        run: |
+          ZIP_PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel.zip"
+          if [ ! -f "$ZIP_PATH" ]; then
+            echo "错误：找不到产物 $ZIP_PATH"
+            exit 1
+          fi
+          pip3 install -q telethon
+          python3 "$GITHUB_WORKSPACE/.github/bot.py" --caption "$CAPTION" "$ZIP_PATH"
+
+      - name: 输出构建摘要
+        if: always()
+        run: |
+          echo "## 构建摘要" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- 分支: ${{ github.event.inputs.Branch }}" >> $GITHUB_STEP_SUMMARY
+          echo "- defconfig: ${{ env.KERNEL_CONFIG }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Root: ${{ github.event.inputs.SU }}" >> $GITHUB_STEP_SUMMARY
+          echo "- BBR: ${{ github.event.inputs.BBR }}" >> $GITHUB_STEP_SUMMARY
+          echo "- SUSFS: ${{ github.event.inputs.SUSFS }}" >> $GITHUB_STEP_SUMMARY
+          echo "- DroidSpace: ${{ github.event.inputs.DroidSpace }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Telegram: ${{ github.event.inputs.TG }}" >> $GITHUB_STEP_SUMMARY
+          echo "- 状态: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
